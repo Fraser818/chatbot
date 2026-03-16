@@ -3,7 +3,8 @@ import { createClient } from "redis";
 import { isProductionEnvironment } from "@/lib/constants";
 import { ChatbotError } from "@/lib/errors";
 
-const MAX_MESSAGES = 10;
+// 开发环境提高限流阈值
+const MAX_MESSAGES = isProductionEnvironment ? 10 : 1000;
 const TTL_SECONDS = 60 * 60;
 
 let client: ReturnType<typeof createClient> | null = null;
