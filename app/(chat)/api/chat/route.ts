@@ -19,7 +19,7 @@ import { createDocument } from "@/lib/ai/tools/create-document";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { updateDocument } from "@/lib/ai/tools/update-document";
-import { isProductionEnvironment } from "@/lib/constants";
+import { isProductionEnvironment, isDevelopmentEnvironment } from "@/lib/constants";
 import {
   createStreamId,
   deleteChatById,
@@ -83,13 +83,16 @@ export async function POST(request: Request) {
 
     const userType: UserType = session.user.type;
 
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 1,
-    });
+    // 开发环境跳过限流检查
+    if (!isDevelopmentEnvironment) {
+      const messageCount = await getMessageCountByUserId({
+        id: session.user.id,
+        differenceInHours: 1,
+      });
 
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerHour) {
-      return new ChatbotError("rate_limit:chat").toResponse();
+      if (messageCount > entitlementsByUserType[userType].maxMessagesPerHour) {
+        return new ChatbotError("rate_limit:chat").toResponse();
+      }
     }
 
     const isToolApprovalFlow = Boolean(messages);
@@ -148,7 +151,19 @@ export async function POST(request: Request) {
       (selectedChatModel.includes("reasoning") &&
         !selectedChatModel.includes("non-reasoning"));
 
-    const modelMessages = await convertToModelMessages(uiMessages);
+    // 检测是否使用阿里云 Qwen 模型
+    const isAlibabaModel = selectedChatModel.startsWith("alibaba/");
+
+    // 阿里云 Qwen 暂时禁用工具调用（兼容性問題）
+    const disableTools = isAlibabaModel;
+
+    // 对于阿里云模型，只保留 user 消息，不使用历史 assistant 消息
+    // 因为 convertToModelMessages 转换的 assistant 消息格式阿里云不兼容
+    const messagesForModel = isAlibabaModel
+      ? uiMessages.filter((m) => m.role === "user")
+      : uiMessages;
+
+    const modelMessages = await convertToModelMessages(messagesForModel);
 
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
@@ -158,14 +173,16 @@ export async function POST(request: Request) {
           system: systemPrompt({ selectedChatModel, requestHints }),
           messages: modelMessages,
           stopWhen: stepCountIs(5),
-          experimental_activeTools: isReasoningModel
+          experimental_activeTools: disableTools
             ? []
-            : [
-                "getWeather",
-                "createDocument",
-                "updateDocument",
-                "requestSuggestions",
-              ],
+            : isReasoningModel
+              ? []
+              : [
+                  "getWeather",
+                  "createDocument",
+                  "updateDocument",
+                  "requestSuggestions",
+                ],
           providerOptions: isReasoningModel
             ? {
                 anthropic: {
