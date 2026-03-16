@@ -1,5 +1,5 @@
 // Curated list of top models from Vercel AI Gateway
-export const DEFAULT_CHAT_MODEL = "openai/gpt-4.1-mini";
+export const DEFAULT_CHAT_MODEL = "alibaba/qwen-plus";
 
 export type ChatModel = {
   id: string;
@@ -9,6 +9,37 @@ export type ChatModel = {
 };
 
 export const chatModels: ChatModel[] = [
+  // Alibaba Qwen
+  {
+    id: "alibaba/qwen-turbo",
+    name: "Qwen Turbo",
+    provider: "alibaba",
+    description: "快速且经济实惠",
+  },
+  {
+    id: "alibaba/qwen-plus",
+    name: "Qwen Plus",
+    provider: "alibaba",
+    description: "性能均衡，适合日常任务",
+  },
+  {
+    id: "alibaba/qwen-max",
+    name: "Qwen Max",
+    provider: "alibaba",
+    description: "最强 Qwen 模型",
+  },
+  {
+    id: "alibaba/qwen-coder",
+    name: "Qwen Coder",
+    provider: "alibaba",
+    description: "代码生成专用",
+  },
+  {
+    id: "alibaba/qwen-vl-max",
+    name: "Qwen VL Max",
+    provider: "alibaba",
+    description: "视觉理解模型",
+  },
   // Anthropic
   {
     id: "anthropic/claude-haiku-4.5",
@@ -50,6 +81,12 @@ export const chatModels: ChatModel[] = [
     description: "Fast with 30K context",
   },
   // Reasoning models (extended thinking)
+  {
+    id: "alibaba/qwen-max-thinking",
+    name: "Qwen Max Thinking",
+    provider: "reasoning",
+    description: "Qwen 推理模型，适合复杂问题",
+  },
   {
     id: "anthropic/claude-3.7-sonnet-thinking",
     name: "Claude 3.7 Sonnet",
