@@ -23,6 +23,9 @@ import {
   chat,
   type DBMessage,
   document,
+  type FileAsset,
+  fileAsset,
+  agentFile,
   message,
   type Suggestion,
   stream,
@@ -603,5 +606,131 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
       "bad_request:database",
       "Failed to get stream ids by chat id"
     );
+  }
+}
+
+// ============================================
+// File Asset Queries (for TumorQuotationAgent)
+// ============================================
+
+/**
+ * 根据 ID 列表获取文件
+ */
+export async function getFilesByIds(fileIds: string[]): Promise<FileAsset[]> {
+  try {
+    if (!fileIds || fileIds.length === 0) {
+      return [];
+    }
+    return await db
+      .select()
+      .from(fileAsset)
+      .where(and(inArray(fileAsset.id, fileIds), eq(fileAsset.isActive, true)));
+  } catch (_error) {
+    console.warn("Failed to get files by ids:", _error);
+    return [];
+  }
+}
+
+/**
+ * 保存文件资产
+ */
+export async function saveFileAsset({
+  id,
+  filename,
+  content,
+  mimeType,
+  size,
+  uploaderId,
+}: {
+  id: string;
+  filename: string;
+  content: string;
+  mimeType: string;
+  size: number;
+  uploaderId: string;
+}) {
+  try {
+    return await db
+      .insert(fileAsset)
+      .values({
+        id,
+        filename,
+        content,
+        mimeType,
+        size,
+        uploaderId,
+        isActive: true,
+      })
+      .returning();
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to save file asset");
+  }
+}
+
+/**
+ * 根据 Agent ID 获取关联文件
+ */
+export async function getFilesByAgentId(agentId: string): Promise<FileAsset[]> {
+  try {
+    const result = await db
+      .select({
+        id: fileAsset.id,
+        filename: fileAsset.filename,
+        content: fileAsset.content,
+        mimeType: fileAsset.mimeType,
+        size: fileAsset.size,
+        checksum: fileAsset.checksum,
+        uploaderId: fileAsset.uploaderId,
+        isActive: fileAsset.isActive,
+        createdAt: fileAsset.createdAt,
+        updatedAt: fileAsset.updatedAt,
+      })
+      .from(agentFile)
+      .innerJoin(fileAsset, eq(agentFile.fileId, fileAsset.id))
+      .where(and(eq(agentFile.agentId, agentId), eq(fileAsset.isActive, true)));
+
+    return result;
+  } catch (_error) {
+    console.warn("Failed to get files by agent id:", _error);
+    return [];
+  }
+}
+
+/**
+ * 关联文件到 Agent
+ */
+export async function linkFileToAgent({
+  agentId,
+  fileId,
+}: {
+  agentId: string;
+  fileId: string;
+}) {
+  try {
+    return await db.insert(agentFile).values({
+      agentId,
+      fileId,
+    });
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to link file to agent");
+  }
+}
+
+/**
+ * 取消关联文件
+ */
+export async function unlinkFileFromAgent({
+  agentId,
+  fileId,
+}: {
+  agentId: string;
+  fileId: string;
+}) {
+  try {
+    return await db
+      .delete(agentFile)
+      .where(and(eq(agentFile.agentId, agentId), eq(agentFile.fileId, fileId)));
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to unlink file from agent");
   }
 }

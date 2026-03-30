@@ -343,6 +343,46 @@ const PurePreviewMessage = ({
               );
             }
 
+            if (type === "tool-tumorQuotation") {
+              const { toolCallId, state } = part;
+
+              if (state === "output-available") {
+                const output = part.output;
+
+                // 渲染 Word 文件下载链接
+                if (output && "wordFiles" in output && Array.isArray(output.wordFiles)) {
+                  return (
+                    <div className="flex flex-col gap-2" key={toolCallId}>
+                      {output.wordFiles.map((file: { fileName: string; url: string }, index: number) => (
+                        <a
+                          key={index}
+                          href={file.url}
+                          download
+                          className="inline-flex items-center gap-2 rounded-lg border bg-muted p-3 text-sm transition-colors hover:bg-muted/80"
+                        >
+                          <svg className="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          <span className="truncate">{file.fileName}</span>
+                        </a>
+                      ))}
+                    </div>
+                  );
+                }
+
+                // 渲染错误消息
+                if (output && "success" in output && output.success === false) {
+                  return (
+                    <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-500" key={toolCallId}>
+                      {String(output.message)}
+                    </div>
+                  );
+                }
+              }
+
+              return null;
+            }
+
             return null;
           })}
 

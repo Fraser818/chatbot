@@ -2,6 +2,7 @@ import type { InferSelectModel } from "drizzle-orm";
 import {
   boolean,
   foreignKey,
+  integer,
   json,
   pgTable,
   primaryKey,
@@ -168,3 +169,48 @@ export const stream = pgTable(
 );
 
 export type Stream = InferSelectModel<typeof stream>;
+
+// ============================================
+// File Asset Tables (for TumorQuotationAgent)
+// ============================================
+
+/**
+ * fileAsset 表 - 存储上传的文件（支持向量检索）
+ * - 存储 Word 文档、PDF 等文件的 Base64 内容
+ * - 可选：存储向量嵌入用于 RAG 检索
+ */
+export const fileAsset = pgTable("file_asset", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  filename: varchar("filename", { length: 256 }).notNull(),
+  content: text("content").notNull(), // Base64 编码的文件内容
+  mimeType: varchar("mimeType", { length: 256 }),
+  size: integer("size"),
+  checksum: varchar("checksum", { length: 64 }), // MD5 校验和
+  uploaderId: uuid("uploaderId").references(() => user.id),
+  isActive: boolean("isActive").default(true),
+  createdAt: timestamp("createdAt").notNull().defaultNow(),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+});
+
+export type FileAsset = InferSelectModel<typeof fileAsset>;
+
+/**
+ * agentFile 表 - Agent 与知识库文件的关联表
+ * - 每个 Agent 可以关联多个知识库文件
+ * - 用于 RAG 检索时的文件范围限定
+ */
+export const agentFile = pgTable(
+  "agent_file",
+  {
+    agentId: varchar("agentId", { length: 64 }).notNull(),
+    fileId: varchar("fileId", { length: 64 })
+      .notNull()
+      .references(() => fileAsset.id),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.agentId, table.fileId] }),
+  })
+);
+
+export type AgentFile = InferSelectModel<typeof agentFile>;

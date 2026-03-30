@@ -18,6 +18,7 @@ import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
+import { tumorQuotation } from "@/lib/ai/tools/tumor-quotation";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { isProductionEnvironment, isDevelopmentEnvironment } from "@/lib/constants";
 import {
@@ -53,6 +54,7 @@ export { getStreamContext };
 
 export async function POST(request: Request) {
   let requestBody: PostRequestBody;
+  let modelMessages: any[] = []; // 用于错误日志
 
   try {
     const json = await request.json();
@@ -154,16 +156,114 @@ export async function POST(request: Request) {
     // 检测是否使用阿里云 Qwen 模型
     const isAlibabaModel = selectedChatModel.startsWith("alibaba/");
 
-    // 阿里云 Qwen 暂时禁用工具调用（兼容性問題）
-    const disableTools = isAlibabaModel;
+    // 推理模型禁用工具调用
+    const disableTools = isReasoningModel;
 
-    // 对于阿里云模型，只保留 user 消息，不使用历史 assistant 消息
-    // 因为 convertToModelMessages 转换的 assistant 消息格式阿里云不兼容
-    const messagesForModel = isAlibabaModel
-      ? uiMessages.filter((m) => m.role === "user")
-      : uiMessages;
+    // 使用完整的消息历史（包括 assistant 消息），这样 LLM 可以看到用户的确认信号
+    // 注意：阿里云模型现在可以正确处理多轮对话了
+    const messagesForModel = uiMessages;
 
-    const modelMessages = await convertToModelMessages(messagesForModel);
+    // [LOG] 记录转换前的 uiMessages
+    console.log("[api/chat] uiMessages 数量:", messagesForModel.length);
+    console.log("[api/chat] uiMessages 角色分布:", messagesForModel.map((m: any) => m.role).join(", "));
+
+    let modelMessages = await convertToModelMessages(messagesForModel);
+
+    // [LOG] 记录 convertToModelMessages 转换后的结果
+    console.log("[api/chat] modelMessages 数量:", modelMessages.length);
+    console.log("[api/chat] modelMessages 角色分布:", modelMessages.map((m: any) => m.role).join(", "));
+
+    // [LOG] 检查每条消息的 content 字段
+    modelMessages.forEach((msg: any, idx: number) => {
+      console.log(`[api/chat] msg[${idx}] role=${msg.role}, hasContent=${!!msg.content}, content=`,
+        typeof msg.content === 'string' ? `"${msg.content?.slice(0, 50)}"` :
+        Array.isArray(msg.content) ? `array[${msg.content.length}]` : typeof msg.content);
+      if (msg.parts) {
+        console.log(`[api/chat] msg[${idx}] parts 数量:`, msg.parts.length);
+      }
+    });
+
+    // 修复阿里云 Qwen API 的 content 字段要求
+    // 阿里云 compatible-mode 端点要求每条消息必须有 content 字段（字符串格式）
+    if (isAlibabaModel) {
+      console.log("[api/chat] 检测到阿里云模型，开始修复 content 字段...");
+      modelMessages = (modelMessages as any[]).map((msg: any, idx: number) => {
+        // System messages don't need content field in the same way
+        if (msg.role === "system") {
+          console.log(`[api/chat] msg[${idx}] system 消息，跳过`);
+          return msg;
+        }
+
+        // For tool messages, the content is an array of tool result parts
+        // We need to ensure it's not empty
+        if (msg.role === "tool") {
+          // ToolModelMessage has content as an array, ensure it's not empty
+          if (!msg.content || (Array.isArray(msg.content) && msg.content.length === 0)) {
+            console.log(`[api/chat] msg[${idx}] 修复空 content 的 tool 消息`);
+            return { ...msg, content: " " };
+          }
+          // 如果 content 是数组，转换为字符串
+          if (Array.isArray(msg.content)) {
+            const textContent = msg.content
+              .map((item: any) => {
+                if (typeof item === 'string') return item;
+                if (item && typeof item.text === 'string') return item.text;
+                if (item && item.type === 'text') return item.text || '';
+                return JSON.stringify(item);
+              })
+              .join('');
+            console.log(`[api/chat] msg[${idx}] tool 消息 content 数组转字符串`);
+            return { ...msg, content: textContent || " " };
+          }
+          console.log(`[api/chat] msg[${idx}] tool 消息 content 正常`);
+          return msg;
+        }
+
+        // For user and assistant messages, ensure content is a string
+        if (Array.isArray(msg.content)) {
+          // 数组格式：[{ type: 'text', text: '...' }, ...]
+          const textContent = msg.content
+            .map((item: any) => {
+              if (typeof item === 'string') return item;
+              if (item && typeof item.text === 'string') return item.text;
+              if (item && item.type === 'text') return item.text || '';
+              return '';
+            })
+            .join('');
+          console.log(`[api/chat] msg[${idx}] 从 content 数组提取文本:`, textContent.slice(0, 30));
+          return { ...msg, content: textContent || " " };
+        }
+
+        // For user and assistant messages, ensure content exists and is string
+        if (!msg.content || msg.content === "") {
+          // Try to extract text from parts if available
+          if (msg.parts && Array.isArray(msg.parts)) {
+            const textContent = msg.parts
+              .filter((p: any) => p && p.type === "text")
+              .map((p: any) => p.text || "")
+              .join("");
+            if (textContent) {
+              console.log(`[api/chat] msg[${idx}] 从 parts 提取 content:`, textContent.slice(0, 30));
+            }
+            return { ...msg, content: textContent || " " };
+          }
+          console.log(`[api/chat] msg[${idx}] 使用默认 content 空格`);
+          return { ...msg, content: " " };
+        }
+
+        console.log(`[api/chat] msg[${idx}] content 正常`);
+        return msg;
+      });
+
+      // [LOG] 修复后再次检查
+      console.log("[api/chat] 修复后 modelMessages 检查:");
+      modelMessages.forEach((msg: any, idx: number) => {
+        const contentInfo = typeof msg.content === 'string'
+          ? `content="${msg.content.slice(0, 30)}${msg.content.length > 30 ? '...' : ''}"`
+          : `content=${typeof msg.content}`;
+        console.log(`[api/chat] fixed msg[${idx}] role=${msg.role}, ${contentInfo}`);
+      });
+    }
 
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
@@ -182,6 +282,7 @@ export async function POST(request: Request) {
                   "createDocument",
                   "updateDocument",
                   "requestSuggestions",
+                  "tumorQuotation",
                 ],
           providerOptions: isReasoningModel
             ? {
@@ -195,6 +296,7 @@ export async function POST(request: Request) {
             createDocument: createDocument({ session, dataStream }),
             updateDocument: updateDocument({ session, dataStream }),
             requestSuggestions: requestSuggestions({ session, dataStream }),
+            tumorQuotation: tumorQuotation({ session, dataStream, chatId: id }),
           },
           experimental_telemetry: {
             isEnabled: isProductionEnvironment,
@@ -287,6 +389,15 @@ export async function POST(request: Request) {
   } catch (error) {
     const vercelId = request.headers.get("x-vercel-id");
 
+    // [LOG] 记录详细的错误信息
+    console.error("[api/chat] 错误详情:", {
+      name: error instanceof Error ? error.name : "Unknown",
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      cause: error instanceof Error && error.cause ? error.cause : undefined,
+      vercelId,
+    });
+
     if (error instanceof ChatbotError) {
       return error.toResponse();
     }
@@ -298,6 +409,18 @@ export async function POST(request: Request) {
       )
     ) {
       return new ChatbotError("bad_request:activate_gateway").toResponse();
+    }
+
+    // [LOG] 特别记录 TypeValidationError 的详细信息
+    if (error instanceof Error && error.name === "AI_TypeValidationError") {
+      console.error("[api/chat] TypeValidationError 详细信息:", {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      });
+      // 记录导致错误的请求体信息
+      console.error("[api/chat] 最后发送的 modelMessages:", JSON.stringify(modelMessages, null, 2).slice(0, 2000));
     }
 
     console.error("Unhandled error in chat API:", error, { vercelId });
