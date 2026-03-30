@@ -244,9 +244,14 @@ export async function getChatById({ id }: { id: string }) {
 
 export async function saveMessages({ messages }: { messages: DBMessage[] }) {
   try {
+    if (!messages || messages.length === 0) {
+      return;
+    }
     return await db.insert(message).values(messages);
-  } catch (_error) {
-    throw new ChatbotError("bad_request:database", "Failed to save messages");
+  } catch (error) {
+    // 静默失败，不中断主流程
+    console.warn("Failed to save messages:", error);
+    // 不抛出错误，让主流程继续
   }
 }
 

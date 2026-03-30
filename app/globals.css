@@ -89,8 +89,8 @@
 
 /* define theme */
 @theme {
-  --font-sans: var(--font-geist);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
   --breakpoint-toast-mobile: 600px;
 
@@ -295,6 +295,40 @@
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+}
+
+/* streamdown code block styling */
+[data-streamdown="code-block"] {
+  @apply my-4 w-full overflow-hidden rounded-xl border border-border;
+}
+
+[data-streamdown="code-block-body"] {
+  @apply bg-zinc-100 dark:bg-zinc-900 p-4 overflow-x-auto text-sm;
+  /* shiki theme colors for syntax highlighting */
+  --shiki-dark-bg: theme('colors.zinc.900');
+  --shiki-dark: theme('colors.zinc.100');
+  --shiki-light-bg: theme('colors.zinc.100');
+  --shiki-light: theme('colors.zinc.900');
+}
+
+[data-streamdown="code-block-body"] code {
+  @apply bg-transparent p-0 font-mono;
+}
+
+[data-streamdown="code-block-header"] {
+  @apply flex items-center justify-between bg-muted/80 p-3 text-muted-foreground text-xs border-b border-border;
+}
+
+[data-streamdown="code-block-copy-button"],
+[data-streamdown="code-block-download-button"] {
+  @apply cursor-pointer p-1 text-muted-foreground transition-all hover:text-foreground;
+}
+
+/* inline code styling */
+p code,
+li code,
+td code {
+  @apply bg-muted px-1.5 py-0.5 rounded-md text-sm font-mono;
 }
 
 @theme inline {
