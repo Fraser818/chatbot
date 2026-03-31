@@ -22,6 +22,7 @@ import { MessageEditor } from "./message-editor";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather } from "./weather";
+import { WordPreviewDrawer } from "./word-preview-drawer";
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
@@ -45,6 +46,13 @@ const PurePreviewMessage = ({
   requiresScrollPadding: boolean;
 }) => {
   const [mode, setMode] = useState<"view" | "edit">("view");
+  const [wordPreviewOpen, setWordPreviewOpen] = useState(false);
+  const [wordPreviewFile, setWordPreviewFile] = useState<{ fileName: string; url: string; language?: string } | null>(null);
+
+  const handleOpenWordPreview = (file: { fileName: string; url: string; language?: string }) => {
+    setWordPreviewFile(file);
+    setWordPreviewOpen(true);
+  };
 
   const attachmentsFromMessage = message.parts.filter(
     (part) => part.type === "file"
@@ -104,9 +112,45 @@ const PurePreviewMessage = ({
             </div>
           )}
 
+          {/* 第一阶段：渲染 reasoning 和 text 消息（不包括 tool-tumorQuotation） */}
           {message.parts?.map((part, index) => {
             const { type } = part;
             const key = `message-${message.id}-part-${index}`;
+
+            // 处理 tool-tumorQuotation 的输入流状态（显示"正在生成报价..."）
+            if (type === "tool-tumorQuotation") {
+              const state = (part as { state?: string }).state;
+
+              // 在输入流式传输期间显示加载状态
+              if (state === "input-streaming" || state === "input-requesting") {
+                return (
+                  <div key={key} className="flex items-center gap-2 text-muted-foreground text-sm">
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent" />
+                    <span>正在生成报价单...</span>
+                  </div>
+                );
+              }
+
+              // 输入已准备好但工具还未执行
+              if (state === "input-available") {
+                return (
+                  <div key={key} className="flex items-center gap-2 text-muted-foreground text-sm">
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent" />
+                    <span>正在处理报价信息...</span>
+                  </div>
+                );
+              }
+
+              // 工具执行完成，跳过（在第二阶段渲染）
+              if (state === "output-available") {
+                return null;
+              }
+            }
+
+            // 跳过 tool-tumorQuotation，稍后在底部渲染
+            if (type === "tool-tumorQuotation") {
+              return null;
+            }
 
             if (type === "reasoning") {
               const hasContent = part.text?.trim().length > 0;
@@ -125,8 +169,16 @@ const PurePreviewMessage = ({
 
             if (type === "text") {
               if (mode === "view") {
+                // 检查是否是报价单的 text 部分（同消息中有 tool-tumorQuotation）
+                const hasTumorQuotation = message.parts?.some(
+                  (p) => p.type === "tool-tumorQuotation"
+                );
+
                 return (
-                  <div key={key}>
+                  <div key={key} className={cn(
+                    "w-full max-w-none",
+                    hasTumorQuotation && "max-w-[700px]"
+                  )}>
                     <MessageContent
                       className={cn({
                         "wrap-break-word w-fit rounded-2xl px-3 py-2 text-right text-white":
@@ -141,7 +193,14 @@ const PurePreviewMessage = ({
                           : undefined
                       }
                     >
-                      <Response>{sanitizeText(part.text)}</Response>
+                      <Response className={cn(
+                        hasTumorQuotation && "prose-quoteless",
+                        "[&_table]:w-full [&_table]:max-w-full",
+                        "[&_table_th]:bg-blue-50 [&_table_th]:text-blue-900 [&_table_th]:font-semibold",
+                        "[&_table_td]:border [&_table_td]:border-gray-200 [&_table_td]:px-3 [&_table_td]:py-2",
+                        "[&_table_tr]:border-b [&_table_tr]:border-gray-200",
+                        "[&_table]:my-2"
+                      )}>{sanitizeText(part.text)}</Response>
                     </MessageContent>
                   </div>
                 );
@@ -225,8 +284,8 @@ const PurePreviewMessage = ({
                     <ToolContent>
                       {(state === "input-available" ||
                         state === "approval-requested") && (
-                        <ToolInput input={part.input} />
-                      )}
+                          <ToolInput input={part.input} />
+                        )}
                       {state === "approval-requested" && approvalId && (
                         <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
                           <button
@@ -343,28 +402,45 @@ const PurePreviewMessage = ({
               );
             }
 
-            if (type === "tool-tumorQuotation") {
+            return null;
+          })}
+
+          {/* 第二阶段：渲染 tool-tumorQuotation 文件链接（在底部） */}
+          {message.parts?.map((part, index) => {
+            if (part.type === "tool-tumorQuotation") {
               const { toolCallId, state } = part;
 
               if (state === "output-available") {
                 const output = part.output;
 
-                // 渲染 Word 文件下载链接
+                // 渲染 Word 文件下载链接（带预览功能）
                 if (output && "wordFiles" in output && Array.isArray(output.wordFiles)) {
                   return (
-                    <div className="flex flex-col gap-2" key={toolCallId}>
-                      {output.wordFiles.map((file: { fileName: string; url: string }, index: number) => (
-                        <a
+                    <div className="flex flex-col gap-2" key={`wordfile-${toolCallId}`}>
+                      <div className="text-sm text-muted-foreground mb-1">报价单已生成，点击下方文件预览或下载：</div>
+                      {output.wordFiles.map((file: { fileName: string; url: string; language?: string }, index: number) => (
+                        <button
                           key={index}
-                          href={file.url}
-                          download
-                          className="inline-flex items-center gap-2 rounded-lg border bg-muted p-3 text-sm transition-colors hover:bg-muted/80"
+                          onClick={() => handleOpenWordPreview(file)}
+                          className="group inline-flex w-fit max-w-md items-center gap-3 rounded-lg border border-blue-200 bg-blue-50/50 p-3 text-left text-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:shadow-sm"
                         >
-                          <svg className="size-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                          </svg>
-                          <span className="truncate">{file.fileName}</span>
-                        </a>
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-blue-100 text-blue-600 group-hover:bg-blue-200">
+                            <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 2l5 5h-5V4zM6 20V4h5v5a1 1 0 0 0 1 1h5v10H6z" />
+                            </svg>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-blue-900 truncate">{file.fileName}</div>
+                            <div className="text-xs text-blue-600">{file.language || "Word 文档"}</div>
+                          </div>
+                          <div className="flex items-center gap-1 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                            <span className="text-xs font-medium">预览</span>
+                          </div>
+                        </button>
                       ))}
                     </div>
                   );
@@ -385,6 +461,16 @@ const PurePreviewMessage = ({
 
             return null;
           })}
+
+          {/* Word 预览抽屉 */}
+          <WordPreviewDrawer
+            open={wordPreviewOpen}
+            onClose={() => {
+              setWordPreviewOpen(false);
+              setWordPreviewFile(null);
+            }}
+            file={wordPreviewFile}
+          />
 
           {!isReadonly && (
             <MessageActions

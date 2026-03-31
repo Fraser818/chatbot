@@ -12,7 +12,7 @@
  * - 用户确认后，执行完整报价流程：价格提取 → Markdown → Word 文档
  */
 
-import { tool, type UIMessageStreamWriter } from "ai"
+import { tool, type UIMessageStreamWriter, generateId } from "ai"
 import type { Session } from "next-auth"
 import { z } from "zod"
 import {
@@ -24,7 +24,6 @@ import {
 } from "@/lib/agents/tumor/workflow"
 import { getModelTypeFromRoute } from "@/lib/agents/tumor/utils"
 import type { ChatMessage } from "@/lib/types"
-import { generateId } from "ai"
 
 type TumorQuotationProps = {
   session: Session
@@ -63,7 +62,11 @@ export const tumorQuotation = ({ session, dataStream, chatId }: TumorQuotationPr
 - 没有用户明确确认信号就生成报价
 
 【语言要求】
-- 无论用户使用何种语言输入，始终使用**简体中文**进行回复`,
+- 无论用户使用何种语言输入，始终使用**简体中文**进行回复
+
+【重要说明】
+- 调用此工具后，系统会自动显示 Markdown 报价表格和 Word 文档下载链接
+- 工具返回后，**不要**再生成任何额外的回复、总结或下载链接`,
 
     inputSchema: z.object({
       userQuery: z.string().describe("The user request or question"),
@@ -102,31 +105,29 @@ export const tumorQuotation = ({ session, dataStream, chatId }: TumorQuotationPr
       }
 
       // 阶段二：生成 Markdown 报价单（流式输出）
+      // 使用 text-start/text-delta/text-end 格式，这样内容会被保存为消息的 text 部分
+      const textId = generateId()
+      console.log("[TumorQuotation] 开始发送 text-start，textId:", textId)
+      dataStream.write({ type: 'text-start', id: textId })
+
       const { mdContent, textStream } = await generateMarkdownQuotation(
         userQuery,
         historyText,
-        priceData
+        priceData,
+        undefined
       )
 
-      // 使用同一个 ID 发送完整的文本块
-      const textId = generateId()
-      dataStream.write({
-        type: "text-start",
-        id: textId,
-      })
+      console.log("[TumorQuotation] Markdown 内容长度:", mdContent.length)
 
+      // 流式输出 Markdown 内容
+      let chunkCount = 0
       for await (const chunk of textStream) {
-        dataStream.write({
-          type: "text-delta",
-          delta: chunk,
-          id: textId,
-        })
+        dataStream.write({ type: 'text-delta', delta: chunk, id: textId })
+        chunkCount++
       }
 
-      dataStream.write({
-        type: "text-end",
-        id: textId,
-      })
+      console.log("[TumorQuotation] 发送完毕，共发送", chunkCount, "个 chunk")
+      dataStream.write({ type: 'text-end', id: textId })
 
       // 阶段三：生成 Word 文档
       const languages = [
@@ -134,24 +135,8 @@ export const tumorQuotation = ({ session, dataStream, chatId }: TumorQuotationPr
         { code: "USD" as const, name: "英文", currency: "USD", price: priceData.unitPriceUSD },
       ].filter((lang) => lang.price > 0)
 
-      const wordFiles: { fileName: string; url: string }[] = []
+      const wordFiles: { fileName: string; url: string; language?: string }[] = []
       for (const lang of languages) {
-        // 每个文本块使用独立的 ID
-        const blockId = generateId()
-        dataStream.write({
-          type: "text-start",
-          id: blockId,
-        })
-        dataStream.write({
-          type: "text-delta",
-          delta: `\n\n🔄 正在生成 ${lang.name}报价单 (${lang.currency})... `,
-          id: blockId,
-        })
-        dataStream.write({
-          type: "text-end",
-          id: blockId,
-        })
-
         try {
           // 提取模板变量
           const vars = await extractTemplateVars(userQuery, historyText, historyText)
@@ -164,56 +149,34 @@ export const tumorQuotation = ({ session, dataStream, chatId }: TumorQuotationPr
           const wordFile = await generateWordQuote(docxData, lang.code, modelType, session.user.id)
 
           const fileUrl = `/api/files/${wordFile.fileId}`
-          wordFiles.push({ fileName: wordFile.fileName, url: fileUrl })
-
-          // 发送 Word 文档下载链接（使用自定义数据事件）
-          dataStream.write({
-            type: "data-word-file",
-            data: {
-              id: wordFile.fileId,
-              url: fileUrl,
-              name: wordFile.fileName,
-              language: lang.name,
-            },
-          } as any)
-
-          // 使用同一个 ID 发送完整的文本块
-          const successId = generateId()
-          dataStream.write({
-            type: "text-start",
-            id: successId,
-          })
-          dataStream.write({
-            type: "text-delta",
-            delta: `\n✅ ${lang.name}报价单生成完成：[${wordFile.fileName}](${fileUrl})`,
-            id: successId,
-          })
-          dataStream.write({
-            type: "text-end",
-            id: successId,
+          wordFiles.push({
+            fileName: wordFile.fileName,
+            url: fileUrl,
+            language: lang.name
           })
         } catch (error) {
-          // 使用同一个 ID 发送错误的文本块
-          const errorId = generateId()
-          dataStream.write({
-            type: "text-start",
-            id: errorId,
-          })
-          dataStream.write({
-            type: "text-delta",
-            delta: `\n❌ ${lang.name}报价单生成失败：${error}`,
-            id: errorId,
-          })
-          dataStream.write({
-            type: "text-end",
-            id: errorId,
-          })
+          console.error(`[${lang.name}报价单生成失败]`, error)
         }
+      }
+
+      // 生成 Word 文档后，发送文件下载链接（使用自定义数据事件）
+      // 注意：这部分不再通过流式消息显示"正在生成"等临时内容
+      for (const file of wordFiles) {
+        dataStream.write({
+          type: "data-word-file",
+          data: {
+            id: file.url.split("/").pop(),
+            url: file.url,
+            name: file.fileName,
+            language: file.fileName.includes("报价单") ? "中文" : "英文",
+          },
+        } as any)
       }
 
       return {
         success: true,
         message: "Quotation generated successfully.",
+        mdContent, // 将 markdown 内容添加到输出
         priceData,
         wordFiles,
       }

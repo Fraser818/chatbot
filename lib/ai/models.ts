@@ -17,6 +17,12 @@ export const chatModels: ChatModel[] = [
     description: "快速且经济实惠",
   },
   {
+    id: "alibaba/deepseek-v3",
+    name: "DeepSeek V3",
+    provider: "alibaba",
+    description: "深度求索大语言模型",
+  },
+  {
     id: "alibaba/qwen-plus",
     name: "Qwen Plus",
     provider: "alibaba",

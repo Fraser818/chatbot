@@ -7,7 +7,7 @@ import { streamText } from 'ai'
 import { getLanguageModel } from '@/lib/ai/providers'
 import { SELECT_PROMPT_BOTH } from '@/lib/ai/prompts/tumor-prompts'
 import type { PriceData, QuotationTemplateVars, DocxTemplateData } from './types'
-import { cleanJsonString, formatNumberWithCommas, TEMPLATE_MAP, getModelTypeFromRoute } from './utils'
+import { cleanJsonString, TEMPLATE_MAP } from './utils'
 import { readFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
@@ -79,7 +79,10 @@ export async function generateMarkdownQuotation(
 4. 实验设计：评价指标、分组方式、给药方式
 5. 附加服务（如 IVIS 成像、样本收集等）
 
-**重要：直接输出 Markdown 内容，不要使用 \`\`\`markdown 或 \`\`\` 代码块包裹。**
+**重要：**
+- 直接输出 Markdown 内容，不要使用 \`\`\`markdown 或 \`\`\` 代码块包裹。
+- **不要**生成文件下载链接（Word 文档会自动在下方显示）。
+- 在表格最后添加一句简短提示："报价单已生成，请查看下方的 Word 文档附件。"
 `
 
   const result = await streamText({
@@ -90,14 +93,11 @@ export async function generateMarkdownQuotation(
   let mdContent = ''
   const chunks: string[] = []
 
-  // 收集流式输出
+  // 流式收集输出
   for await (const chunk of result.textStream) {
     chunks.push(chunk)
     mdContent += chunk
   }
-
-  // 移除可能存在的代码块标记
-  mdContent = mdContent.replace(/^```markdown\s*/, '').replace(/^```\s*/, '').replace(/```\s*$/, '')
 
   return {
     mdContent,

@@ -133,6 +133,81 @@ export function Chat({
     }),
     onData: (dataPart) => {
       setDataStream((ds) => (ds ? [...ds, dataPart] : []));
+
+      // 处理报价单的 markdown 流式内容
+      if (dataPart.type === "data-textDelta") {
+        // 将 markdown chunk 追加到包含 tool- part 的助手消息
+        setMessages((prevMessages) => {
+          // 查找包含 tool- part 的 assistant 消息
+          const targetIndex = prevMessages.findIndex((msg) =>
+            msg.role === "assistant" &&
+            msg.parts?.some((part) => part.type?.startsWith("tool-"))
+          );
+
+          if (targetIndex === -1) {
+            // 没有包含 tool- part 的消息，创建一个
+            return [
+              ...prevMessages,
+              {
+                id: generateUUID(),
+                role: "assistant" as const,
+                parts: [
+                  {
+                    type: "text" as const,
+                    text: dataPart.data as string,
+                  },
+                ],
+                createdAt: new Date(),
+                attachments: [],
+              },
+            ];
+          }
+
+          // 检查该消息是否有 text part
+          const message = prevMessages[targetIndex];
+          const lastTextPartIndex = message.parts.findIndex(
+            (part) => part.type === "text"
+          );
+
+          if (lastTextPartIndex === -1) {
+            // 没有 text part，创建一个新的
+            return prevMessages.map((msg, idx) => {
+              if (idx === targetIndex) {
+                return {
+                  ...msg,
+                  parts: [
+                    ...msg.parts,
+                    {
+                      type: "text" as const,
+                      text: dataPart.data as string,
+                    },
+                  ],
+                };
+              }
+              return msg;
+            });
+          }
+
+          // 有 text part，追加内容
+          return prevMessages.map((msg, idx) => {
+            if (idx === targetIndex) {
+              return {
+                ...msg,
+                parts: msg.parts.map((part, partIdx) => {
+                  if (partIdx === lastTextPartIndex && part.type === "text") {
+                    return {
+                      ...part,
+                      text: part.text + (dataPart.data as string),
+                    };
+                  }
+                  return part;
+                }),
+              };
+            }
+            return msg;
+          });
+        });
+      }
     },
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
