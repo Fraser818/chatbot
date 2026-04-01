@@ -9,8 +9,42 @@ import { isTestEnvironment } from "../constants";
 
 const THINKING_SUFFIX_REGEX = /-thinking$/;
 
+/**
+ * 修复 Alibaba 兼容模式 API 的消息格式
+ * 将所有消息的 content 转换为字符串格式
+ */
+function fixAlibabaMessages(messages: any[]) {
+  return messages.map((msg) => {
+    // 处理 null 或 undefined
+    if (msg.content == null) {
+      return { ...msg, content: "" };
+    }
+
+    // 处理数组格式：[{ type: "text", text: "..." }]
+    if (Array.isArray(msg.content)) {
+      const textContent = msg.content
+        .filter((part: any) => part.type === "text")
+        .map((part: any) => part.text)
+        .join("");
+      return { ...msg, content: textContent };
+    }
+
+    // 处理对象格式：{ type: "text", text: "..." }
+    if (typeof msg.content === "object" && msg.content.type === "text" && typeof msg.content.text === "string") {
+      return { ...msg, content: msg.content.text };
+    }
+
+    // 其他对象格式转为字符串
+    if (typeof msg.content === "object") {
+      return { ...msg, content: JSON.stringify(msg.content) };
+    }
+
+    // 已经是字符串，直接返回
+    return msg;
+  });
+}
+
 // 创建阿里云实例（使用 OpenAI 兼容接口）
-// 添加兼容性配置以处理多轮对话
 let alibaba: ReturnType<typeof createAlibaba> | null = null;
 
 function getAlibabaClient() {
@@ -18,6 +52,26 @@ function getAlibabaClient() {
     alibaba = createAlibaba({
       apiKey: process.env.DASHSCOPE_API_KEY,
       baseURL: process.env.DASHSCOPE_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      // 添加自定义 fetch 以修复消息格式
+      fetch: async (url, options) => {
+        if (options?.body) {
+          const body = JSON.parse(options.body as string);
+          // 修复消息格式
+          if (body.messages) {
+            const fixedMessages = fixAlibabaMessages(body.messages);
+            body.messages = fixedMessages;
+            options.body = JSON.stringify(body);
+          }
+        }
+        const response = await globalThis.fetch(url, options);
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error("[Alibaba Provider] Error response:", errorText);
+          // 重新创建 response 以便错误处理
+          return new Response(errorText, { status: response.status, headers: response.headers });
+        }
+        return response;
+      },
     });
   }
   return alibaba;
